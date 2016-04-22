@@ -1,5 +1,5 @@
 {
-	"ImportPath": "k8s_poc/services",
+	"ImportPath": "github.com/jswoods/k8s-health",
 	"GoVersion": "go1.6",
 	"GodepVersion": "v62",
 	"Packages": [

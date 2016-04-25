@@ -496,17 +496,17 @@ func (p MetricParser) Run(line []byte) (tag_map string, metric int, metric_name 
 //}
 
 func LoadKubeEventsConfig() KubeEvents {
-	url := os.Getenv("KUBE_API_SERVER_URL")
+	url := os.Getenv("API_SERVER_URL")
 	if url == "" {
-		log.Fatal("Please specify an env var KUBE_API_SERVER_URL that contains the url name of the kubernetes API.")
+		log.Fatal("Please specify an env var API_SERVER_URL that contains the url name of the kubernetes API.")
 	}
-	username := os.Getenv("KUBE_API_USERNAME")
+	username := os.Getenv("API_USERNAME")
 	if username == "" {
-		log.Fatal("Please specify an env var KUBE_API_USERNAME that contains the username of the kubernetes API.")
+		log.Fatal("Please specify an env var API_USERNAME that contains the username of the kubernetes API.")
 	}
-	password := os.Getenv("KUBE_API_PASSWORD")
+	password := os.Getenv("API_PASSWORD")
 	if password == "" {
-		log.Fatal("Please specify an env var KUBE_API_PASSWORD that contains the password of the kubernetes API.")
+		log.Fatal("Please specify an env var API_PASSWORD that contains the password of the kubernetes API.")
 	}
 	return KubeEvents{
 		Url: url,
@@ -521,17 +521,17 @@ func LoadKubeEventsConfig() KubeEvents {
 }
 
 func LoadKubeMetricsConfigList() MetricCollectors {
-	url := os.Getenv("KUBE_API_SERVER_URL")
+	url := os.Getenv("API_SERVER_URL")
 	if url == "" {
-		log.Fatal("Please specify an env var KUBE_API_SERVER_URL that contains the url name of the kubernetes API.")
+		log.Fatal("Please specify an env var API_SERVER_URL that contains the url name of the kubernetes API.")
 	}
-	username := os.Getenv("KUBE_API_USERNAME")
+	username := os.Getenv("API_USERNAME")
 	if username == "" {
-		log.Fatal("Please specify an env var KUBE_API_USERNAME that contains the username of the kubernetes API.")
+		log.Fatal("Please specify an env var API_USERNAME that contains the username of the kubernetes API.")
 	}
-	password := os.Getenv("KUBE_API_PASSWORD")
+	password := os.Getenv("API_PASSWORD")
 	if password == "" {
-		log.Fatal("Please specify an env var KUBE_API_PASSWORD that contains the password of the kubernetes API.")
+		log.Fatal("Please specify an env var API_PASSWORD that contains the password of the kubernetes API.")
 	}
 	credentials := Credentials{
 		Username: username,

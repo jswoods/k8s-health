@@ -2,9 +2,19 @@ The k8s-health service is a go app that is deployed to a kubernetes cluster and 
 
 ## How to Build
 
+```
 godep restore
-go build -o healthcheck .
+make
+```
 
 ## Build Docker Image
 
+```
 docker build .
+```
+
+## Run Docker Image
+
+```
+docker run -it -e API_SERVER_URL=<https://server> -e API_USERNAME=<username> -e API_PASSWORD=<password> -it jswoods/k8s-health:latest
+```

@@ -16,5 +16,5 @@ docker build .
 ## Run Docker Image
 
 ```
-docker run -it -e API_SERVER_URL=<https://server> -e API_USERNAME=<username> -e API_PASSWORD=<password> -it jswoods/k8s-health:latest
+docker run -it -e API_SERVER_URL=<https://server> -e API_USERNAME=<username> -e API_PASSWORD=<password> -e STATSD_HOST=<statsd host> -e STATSD_PORT=8125 -it jswoods/k8s-health:latest
 ```

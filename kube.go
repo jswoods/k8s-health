@@ -19,6 +19,7 @@ import (
 	rest_client "k8s.io/kubernetes/pkg/client/restclient"
 	kube_fields "k8s.io/kubernetes/pkg/fields"
 	kube_labels "k8s.io/kubernetes/pkg/labels"
+	"os"
 )
 
 const (
@@ -49,7 +50,7 @@ type KubeMetricConfig struct {
 }
 
 func GetHttpClient() (*http.Client, string, error) {
-	c, err := rest_client.InClusterConfig()
+	c, err := InClusterConfig()
 	if err != nil {
 		return nil, "", err
 	}
@@ -129,8 +130,31 @@ func getDeploymentList(client *client.ExtensionsClient) (deployments_list *clien
 	return deployments_interface.List(options)
 }
 
+func InClusterConfig() (*rest_client.Config, error) {
+
+	log.Printf("Figuring out connection information...")
+
+	// check if use https
+	if _, err := os.Stat("/var/run/secrets/kubernetes.io/serviceaccount/" + kube_api.ServiceAccountKubeconfigKey); err == nil {
+		log.Printf(fmt.Sprintf("Cluster connection will be using https"))
+		return rest_client.InClusterConfig()
+	} else {
+		master_url := os.Getenv("API_SERVER_URL")
+		if len(master_url) == 0 {
+			log.Printf("API_SERVER_URL env varialble is not specified, will tru to use http://kubernetes")
+			master_url = "http://kubernetes"
+		}
+
+		return &rest_client.Config{
+			Host:            master_url,
+		}, nil
+	}
+
+}
+
 func (e KubeMetricDetailConfig) Run(metrics chan *Metrics) {
-	localConfig, err := rest_client.InClusterConfig()
+
+	localConfig, err := InClusterConfig()
 	client, err := client.New(localConfig)
 
 	if err != nil {

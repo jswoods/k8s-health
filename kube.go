@@ -145,9 +145,28 @@ func InClusterConfig() (*rest_client.Config, error) {
 			master_url = "http://kubernetes"
 		}
 
-		return &rest_client.Config{
+		config := &rest_client.Config{
 			Host:            master_url,
-		}, nil
+		}
+		config.QPS = 20
+		qps_s := os.Getenv("QPS")
+		if qps_s != "" {
+			qps, err := strconv.ParseFloat(qps_s, 32)
+			if err == nil {
+				config.QPS = float32(qps)
+			}
+		}
+
+		config.Burst = 30
+		burst_s := os.Getenv("BURST")
+		if burst_s != "" {
+			burst, err := strconv.ParseInt(burst_s, 10, 32)
+			if err == nil {
+				config.Burst = int(burst)
+			}
+		}
+
+		return config, nil
 	}
 
 }
@@ -155,6 +174,9 @@ func InClusterConfig() (*rest_client.Config, error) {
 func (e KubeMetricDetailConfig) Run(metrics chan *Metrics) {
 
 	localConfig, err := InClusterConfig()
+
+
+
 	client, err := client.New(localConfig)
 
 	if err != nil {

@@ -20,11 +20,13 @@ const (
 type StatsdEvents struct {
 	Host string
 	Port int
+	Tags string
 }
 
 type StatsdMetrics struct {
 	Host string
 	Port int
+	Tags string
 }
 
 func (e StatsdMetrics) Run(events chan *Metrics) {
@@ -37,7 +39,7 @@ func (e StatsdMetrics) Run(events chan *Metrics) {
 				failed := false
 				for _, m := range event.MetricsList {
 
-					tags := []string{m.Tags}
+					tags := []string{m.Tags + "," + e.Tags}
 					metric := fmt.Sprintf("%s.%s", m.Prefix, m.Name)
 
 					err := a.Send(metric, m.Type, m.Value, 1, tags)
@@ -69,13 +71,13 @@ func (e StatsdEvents) Run(events chan *Events) {
 			defer a.Conn.Close()
 			for event := range events {
 				failed := false
-				for _, e := range event.EventList {
+				for _, event := range event.EventList {
 					optionals := make(map[string]string)
-					optionals["alert_type"] = e.Status
+					optionals["alert_type"] = event.Status
 					optionals["source_type_name"] = "kubernetes"
-					addlTags := []string{e.Tags}
+					addlTags := []string{event.Tags + "," + e.Tags}
 
-					err := a.Event(e.Message, e.Raw, optionals, addlTags)
+					err := a.Event(event.Message, event.Raw, optionals, addlTags)
 					if err != nil {
 						log.Println(fmt.Sprintf("submited an event but it failed: %s", err))
 						failed = true
@@ -96,9 +98,10 @@ func (e StatsdEvents) Run(events chan *Events) {
 	}
 }
 
-func loadStatsdHostPort() (string, int) {
+func loadStatsdHostPort() (string, int, string) {
 	var host string
 	var port int
+	var env_tags string
 	host = os.Getenv("STATSD_HOST")
 	if host == "" {
 		host = DefaultHost
@@ -113,21 +116,25 @@ func loadStatsdHostPort() (string, int) {
 		}
 		port = port_int
 	}
-	return host, port
+	env_tags = os.Getenv("TAGS")
+
+	return host, port, env_tags
 }
 
 func LoadStatsdMetricsConfig() StatsdMetrics {
-	host, port := loadStatsdHostPort()
+	host, port, tags := loadStatsdHostPort()
 	return StatsdMetrics{
 		Host: host,
 		Port: port,
+		Tags: tags,
 	}
 }
 
 func LoadStatsdEventsConfig() StatsdEvents {
-	host, port := loadStatsdHostPort()
+	host, port, tags := loadStatsdHostPort()
 	return StatsdEvents{
 		Host: host,
 		Port: port,
+		Tags: tags,
 	}
 }

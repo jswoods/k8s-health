@@ -135,7 +135,7 @@ func InClusterConfig() (*rest_client.Config, error) {
 	log.Printf("Figuring out connection information...")
 
 	// check if use https
-	if _, err := os.Stat("/var/run/secrets/kubernetes.io/serviceaccount/" + kube_api.ServiceAccountKubeconfigKey); err == nil {
+	if _, err := os.Stat("/var/run/secrets/kubernetes.io/serviceaccount/" + kube_api.ServiceAccountRootCAKey); err == nil {
 		log.Printf(fmt.Sprintf("Cluster connection will be using https"))
 		return rest_client.InClusterConfig()
 	} else {

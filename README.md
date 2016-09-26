@@ -2,16 +2,23 @@ The k8s-health service is a go app that is deployed to a kubernetes cluster and 
 
 ## How to Build
 
+
+
 ```
-godep restore
+export GOPATH=<project_root>
+# godep restore
 make
 ```
 
 ## Build Docker Image
 
 ```
-docker build .
+docker build -t <k8s-health-image-tag>:<version> .
 ```
+
+## Publish docker Image
+
+docker push <k8s-health-image-tag>:<version>
 
 ## Run Docker Image Locally
 

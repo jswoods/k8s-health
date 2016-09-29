@@ -231,7 +231,7 @@ func (e KubeMetricDetailConfig) Run(metrics chan *Metrics) {
 					Name:   metric_name,
 					Type:   "g",
 					Value:  float64(1),
-					Tags:   fmt.Sprintf("source_type:kubernetes,pod:%s,container:%s,namespace:%s,ready:%s", containerStatus.Name, pod.Name, pod.Namespace, strconv.FormatBool(containerStatus.Ready)),
+					Tags:   fmt.Sprintf("source_type:kubernetes,pod:%s,container:%s,namespace:%s,ready:%s,%s", containerStatus.Name, pod.Name, pod.Namespace, strconv.FormatBool(containerStatus.Ready), getLabelTags(pod.ObjectMeta)),
 				}
 				metricsGroup.MetricsList = append(metricsGroup.MetricsList, containerStatuses)
 			}
@@ -246,74 +246,94 @@ func (e KubeMetricDetailConfig) Run(metrics chan *Metrics) {
 				failed++
 			}
 		}
+
+		replicaSetTags := fmt.Sprintf("source_type:kubernetes,replica_set:%s,namespace:%s,%s", deployment.Name, deployment.Namespace, getLabelTags(deployment.ObjectMeta))
+		deploymentTags := fmt.Sprintf("source_type:kubernetes,deployment:%s,namespace:%s,%s", deployment.Name, deployment.Namespace, getLabelTags(deployment.ObjectMeta))
+
 		replicaSetPercentRunning := Metric{
 			Prefix: "kubernetes",
 			Name:   "replica_set.percent_running",
 			Type:   "g",
 			Value:  float64(float64(running) / float64(deployment.Status.Replicas) * 100),
-			Tags:   fmt.Sprintf("source_type:kubernetes,replica_set:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags:   replicaSetTags,
 		}
 		replicaSetPercentWaiting := Metric{
 			Prefix: "kubernetes",
 			Name:   "replica_set.percent_waiting",
 			Type:   "g",
 			Value:  float64(float64(waiting) / float64(deployment.Status.Replicas) * 100),
-			Tags:   fmt.Sprintf("source_type:kubernetes,replica_set:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags:   replicaSetTags,
 		}
 		replicaSetPercentSucceeded := Metric{
 			Prefix: "kubernetes",
 			Name:   "replica_set.percent_succeeded",
 			Type:   "g",
 			Value:  float64(float64(succeeded) / float64(deployment.Status.Replicas) * 100),
-			Tags:   fmt.Sprintf("source_type:kubernetes,replica_set:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags:   replicaSetTags,
 		}
 		replicaSetPercentFailed := Metric{
 			Prefix: "kubernetes",
 			Name:   "replica_set.percent_failed",
 			Type:   "g",
 			Value:  float64(float64(failed) / float64(deployment.Status.Replicas) * 100),
-			Tags:   fmt.Sprintf("source_type:kubernetes,replica_set:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags:   replicaSetTags,
 		}
 		deploymentSpecs := Metric{
 			Prefix: "kubernetes",
 			Name:   "deployment.replicas.spec",
 			Type:   "g",
 			Value:  float64(deployment.Spec.Replicas),
-			Tags:   fmt.Sprintf("source_type:kubernetes,deployment:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags: deploymentTags,
 		}
 		deploymentStatuses := Metric{
 			Prefix: "kubernetes",
 			Name:   "deployment.replicas.status",
 			Type:   "g",
 			Value:  float64(deployment.Status.Replicas),
-			Tags:   fmt.Sprintf("source_type:kubernetes,deployment:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags:   deploymentTags,
 		}
 		deploymentUpdatedReplicas := Metric{
 			Prefix: "kubernetes",
 			Name:   "deployment.replicas.updated",
 			Type:   "g",
 			Value:  float64(deployment.Status.UpdatedReplicas),
-			Tags:   fmt.Sprintf("source_type:kubernetes,deployment:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags:   deploymentTags,
 		}
 		deploymentAvailableReplicas := Metric{
 			Prefix: "kubernetes",
 			Name:   "deployment.replicas.available",
 			Type:   "g",
 			Value:  float64(deployment.Status.AvailableReplicas),
-			Tags:   fmt.Sprintf("source_type:kubernetes,deployment:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags:   deploymentTags,
 		}
 		deploymentUnavailableReplicas := Metric{
 			Prefix: "kubernetes",
 			Name:   "deployment.replicas.unavailable",
 			Type:   "g",
 			Value:  float64(deployment.Status.UnavailableReplicas),
-			Tags:   fmt.Sprintf("source_type:kubernetes,deployment:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags:   deploymentTags,
+		}
+		deploymentPercentAvailable := Metric{
+			Prefix: "kubernetes",
+			Name:   "deployment.percent_available",
+			Type:   "g",
+			Value:  float64(float64(deployment.Status.AvailableReplicas) / float64(deployment.Status.Replicas) * 100),
+			Tags:   deploymentTags,
+		}
+		deploymentPercentUnavailable := Metric{
+			Prefix: "kubernetes",
+			Name:   "deployment.percent_unavailable",
+			Type:   "g",
+			Value:  float64(float64(deployment.Status.UnavailableReplicas) / float64(deployment.Status.Replicas) * 100),
+			Tags:   deploymentTags,
 		}
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, deploymentSpecs)
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, deploymentStatuses)
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, deploymentUpdatedReplicas)
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, deploymentAvailableReplicas)
+		metricsGroup.MetricsList = append(metricsGroup.MetricsList, deploymentPercentAvailable)
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, deploymentUnavailableReplicas)
+		metricsGroup.MetricsList = append(metricsGroup.MetricsList, deploymentPercentUnavailable)
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, replicaSetPercentRunning)
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, replicaSetPercentWaiting)
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, replicaSetPercentSucceeded)
@@ -359,14 +379,14 @@ func (e KubeMetricDetailConfig) Run(metrics chan *Metrics) {
 					Name:   metric_name,
 					Type:   "g",
 					Value:  float64(1),
-					Tags:   fmt.Sprintf("source_type:kubernetes,pod:%s,container:%s,namespace:%s,ready:%s", containerStatus.Name, pod.Name, pod.Namespace, strconv.FormatBool(containerStatus.Ready)),
+					Tags:   fmt.Sprintf("source_type:kubernetes,pod:%s,container:%s,namespace:%s,ready:%s,%s", containerStatus.Name, pod.Name, pod.Namespace, strconv.FormatBool(containerStatus.Ready), getLabelTags(pod.ObjectMeta)),
 				}
 				containerRestarts := Metric{
 					Prefix: "kubernetes",
 					Name:   "container.restarts",
 					Type:   "g",
 					Value:  float64(containerStatus.RestartCount),
-					Tags:   fmt.Sprintf("source_type:kubernetes,pod:%s,container:%s,namespace:%s", containerStatus.Name, pod.Name, pod.Namespace),
+					Tags:   fmt.Sprintf("source_type:kubernetes,pod:%s,container:%s,namespace:%s,%s", containerStatus.Name, pod.Name, pod.Namespace, getLabelTags(pod.ObjectMeta)),
 				}
 				metricsGroup.MetricsList = append(metricsGroup.MetricsList, containerStatuses)
 				metricsGroup.MetricsList = append(metricsGroup.MetricsList, containerRestarts)
@@ -387,28 +407,28 @@ func (e KubeMetricDetailConfig) Run(metrics chan *Metrics) {
 			Name:   "replication_controller.percent_running",
 			Type:   "g",
 			Value:  float64(float64(running) / float64(rc.Status.Replicas) * 100),
-			Tags:   fmt.Sprintf("source_type:kubernetes,replication_controller:%s,namespace:%s", rc.Name, rc.Namespace),
+			Tags:   fmt.Sprintf("source_type:kubernetes,replication_controller:%s,namespace:%s,%s", rc.Name, rc.Namespace, getLabelTags(rc.ObjectMeta)),
 		}
 		replicationControllerPercentWaiting := Metric{
 			Prefix: "kubernetes",
 			Name:   "replication_controller.percent_waiting",
 			Type:   "g",
 			Value:  float64(float64(waiting) / float64(rc.Status.Replicas) * 100),
-			Tags:   fmt.Sprintf("source_type:kubernetes,replication_controller:%s,namespace:%s", rc.Name, rc.Namespace),
+			Tags:   fmt.Sprintf("source_type:kubernetes,replication_controller:%s,namespace:%s,%s", rc.Name, rc.Namespace, getLabelTags(rc.ObjectMeta)),
 		}
 		replicationControllerPercentSucceeded := Metric{
 			Prefix: "kubernetes",
 			Name:   "replication_controller.percent_succeeded",
 			Type:   "g",
 			Value:  float64(float64(succeeded) / float64(rc.Status.Replicas) * 100),
-			Tags:   fmt.Sprintf("source_type:kubernetes,replication_controller:%s,namespace:%s", rc.Name, rc.Namespace),
+			Tags:   fmt.Sprintf("source_type:kubernetes,replication_controller:%s,namespace:%s,%s", rc.Name, rc.Namespace, getLabelTags(rc.ObjectMeta)),
 		}
 		replicationControllerPercentFailed := Metric{
 			Prefix: "kubernetes",
 			Name:   "replication_controller.percent_failed",
 			Type:   "g",
 			Value:  float64(float64(failed) / float64(rc.Status.Replicas) * 100),
-			Tags:   fmt.Sprintf("source_type:kubernetes,replication_controller:%s,namespace:%s", rc.Name, rc.Namespace),
+			Tags:   fmt.Sprintf("source_type:kubernetes,replication_controller:%s,namespace:%s,%s", rc.Name, rc.Namespace, getLabelTags(rc.ObjectMeta)),
 		}
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, replicationControllerPercentRunning)
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, replicationControllerPercentWaiting)
@@ -418,6 +438,14 @@ func (e KubeMetricDetailConfig) Run(metrics chan *Metrics) {
 	metrics <- metricsGroup
 	metricsGroup.MetricsList = []Metric{}
 	time.Sleep(e.Interval * time.Millisecond)
+}
+
+func getLabelTags(metadata kube_api.ObjectMeta) (string) {
+	tags := ""
+	for label, value := range metadata.Labels {
+		tags = tags + fmt.Sprintf("%s:%s,", label, value)
+	}
+	return tags;
 }
 
 type MetricParser struct {

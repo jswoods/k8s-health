@@ -1,11 +1,16 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
 	"time"
 )
+
+func handler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "All good yo")
+}
 
 func main() {
 	events_collector_chan := make(chan *Events)
@@ -46,7 +51,8 @@ func main() {
 	}
 
 	go func() {
-		log.Println(http.ListenAndServe("localhost:6060", nil))
+		http.HandleFunc("/", handler)
+		log.Println(http.ListenAndServe(":8080", nil))
 	}()
 
 	for {

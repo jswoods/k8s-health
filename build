@@ -1,0 +1,26 @@
+#!/bin/bash -x
+
+VERSION=${1}
+
+if [ -z ${VERSION} ]; then
+    echo "Usage: ./build <VERSION>"
+    exit 1
+fi
+
+export GOPATH=~/GO
+make
+
+IMAGE_NAME="mik373/k8s-health"
+#REGISTRY=${DOCKER_REGISTRY:-hub.docker.com}
+
+#DOCKER_TAG=${REGISTRY}/${IMAGE_NAME}
+DOCKER_TAG=${IMAGE_NAME}
+DOCKER_TAG_LATEST=${DOCKER_TAG}:latest
+
+docker build \
+  --rm=true \
+  --file="Dockerfile" \
+  --tag ${DOCKER_TAG_LATEST} \
+  .
+docker tag -f ${DOCKER_TAG_LATEST} ${DOCKER_TAG}:${VERSION}
+docker push ${DOCKER_TAG}:${VERSION}

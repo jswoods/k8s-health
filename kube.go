@@ -3,14 +3,11 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,24 +15,18 @@ import (
 
 	kube_api "k8s.io/kubernetes/pkg/api"
 	client_extensions "k8s.io/kubernetes/pkg/apis/extensions"
-	restclient "k8s.io/kubernetes/pkg/client/restclient"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
+	rest_client "k8s.io/kubernetes/pkg/client/restclient"
 	kube_fields "k8s.io/kubernetes/pkg/fields"
 	kube_labels "k8s.io/kubernetes/pkg/labels"
+	"os"
 )
 
 const (
 	KubeRetrySeconds = 10
 )
 
-type Credentials struct {
-	Username string
-	Password string
-}
-
 type KubeEvents struct {
-	Url         string
-	Credentials Credentials
 	Version     string
 	Path        string
 	Interval    time.Duration
@@ -47,95 +38,86 @@ type KubeEventParsed struct {
 }
 
 type KubeMetricDetailConfig struct {
-	Url         string
-	Credentials Credentials
 	Version     string
 	Path        string
 	Interval    time.Duration
 }
 
 type KubeMetricConfig struct {
-	Url         string
-	Credentials Credentials
 	Version     string
 	Path        string
 	Interval    time.Duration
 }
 
-type Http struct {
-	Url         string
-	Path        string
-	Credentials Credentials
-}
-
-func (h Http) Request(verb string) (*http.Response, error) {
-	log.Printf(fmt.Sprintf("polling %s", h.Url))
-	url := fmt.Sprintf("%s%s", h.Url, h.Path)
-	caCertPool := x509.NewCertPool()
-	tr := &http.Transport{
-		TLSClientConfig:    &tls.Config{RootCAs: caCertPool, InsecureSkipVerify: true},
-		DisableCompression: true,
+func GetHttpClient() (*http.Client, string, error) {
+	c, err := InClusterConfig()
+	if err != nil {
+		return nil, "", err
 	}
-	client := &http.Client{
-		Transport: tr,
+	tr, err := rest_client.TransportFor(c)
+	if err != nil {
+		return nil, "", err
 	}
-	req, _ := http.NewRequest(verb, url, nil)
-	req.SetBasicAuth(h.Credentials.Username, h.Credentials.Password)
-	return client.Do(req)
+	httpClient := &http.Client{Transport: tr}
+	return httpClient, c.Host, nil
 }
 
 func (e KubeEvents) Run(events chan *Events) {
-	httpReq := &Http{
-		Url:         e.Url,
-		Path:        e.Path,
-		Credentials: e.Credentials,
-	}
-	response, err := httpReq.Request("GET")
+	httpClient, host, err := GetHttpClient()
 	if err != nil {
+		log.Printf(fmt.Sprintf("failed to connect to %s! with error %v trying again in %d seconds...", host, err, KubeRetrySeconds))
+		time.Sleep(KubeRetrySeconds * time.Second)
 		return
 	}
-	defer response.Body.Close()
-	log.Printf(fmt.Sprintf("got response from %s", e.Url))
-	log.Printf(fmt.Sprintf("now watching endpoint %s", e.Path))
-	reader := bufio.NewReader(response.Body)
+
 	for {
-		line, err := reader.ReadBytes('\n')
+		response, err := httpClient.Get(fmt.Sprintf("%s/%s", host, e.Path))
+		log.Printf(fmt.Sprintf("got response from %s", host))
 		if err != nil {
-			return
+			continue
 		}
-		line = bytes.TrimSpace(line)
-		jsonString := string(line[:])
+		log.Printf(fmt.Sprintf("now watching endpoint %s", e.Path))
+		reader := bufio.NewReader(response.Body)
 
-		var kubeEventParsed KubeEventParsed
+		for {
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				return
+			}
+			line = bytes.TrimSpace(line)
+			jsonString := string(line[:])
 
-		err = json.Unmarshal([]byte(jsonString), &kubeEventParsed)
-		if err != nil {
-			log.Println(fmt.Sprintf("bad event: %s", jsonString))
-			return
-		}
+			var kubeEventParsed KubeEventParsed
 
-		kubeEvent := kubeEventParsed.Object
+			err = json.Unmarshal([]byte(jsonString), &kubeEventParsed)
+			if err != nil {
+				log.Println(fmt.Sprintf("bad event: %s", jsonString))
+				return
+			}
 
-		status := "info"
-		priority := "low"
+			kubeEvent := kubeEventParsed.Object
 
-		if kubeEvent.Reason == "Unhealthy" {
-			status = "error"
-			priority = "high"
-		}
+			status := "info"
+			priority := "low"
 
-		events <- &Events{
-			EventList: []Event{
-				Event{
-					Sources:  fmt.Sprintf("kubernetes,%s", kubeEvent.Source),
-					Tags:     fmt.Sprintf("source_type:kubernetes,namespace:%s,%s:%s", kubeEvent.Namespace, strings.ToLower(kubeEvent.Kind), kubeEvent.Name),
-					Status:   status,
-					Priority: priority,
-					Reason:   kubeEvent.Reason,
-					Message:  fmt.Sprintf("%s. This event has occurred %d times", kubeEvent.Message, kubeEvent.Count),
-					Raw:      fmt.Sprintf("%s", kubeEvent),
+			if kubeEvent.Reason == "Unhealthy" {
+				status = "error"
+				priority = "high"
+			}
+
+			events <- &Events{
+				EventList: []Event{
+					Event{
+						Sources:  fmt.Sprintf("kubernetes,%s", kubeEvent.Source),
+						Tags:     fmt.Sprintf("source_type:kubernetes,namespace:%s,%s:%s", kubeEvent.Namespace, strings.ToLower(kubeEvent.Kind), kubeEvent.Name),
+						Status:   status,
+						Priority: priority,
+						Reason:   kubeEvent.Reason,
+						Message:  fmt.Sprintf("%s. This event has occurred %d times", kubeEvent.Message, kubeEvent.Count),
+						Raw:      fmt.Sprintf("%s", kubeEvent),
+					},
 				},
-			},
+			}
 		}
 	}
 	fmt.Println("Failed to read response ... retrying in 5 seconds...")
@@ -148,29 +130,72 @@ func getDeploymentList(client *client.ExtensionsClient) (deployments_list *clien
 	return deployments_interface.List(options)
 }
 
-func (e KubeMetricDetailConfig) Run(metrics chan *Metrics) {
-	metricsGroup := &Metrics{}
-	config := &restclient.Config{
-		Host:     e.Url,
-		Username: e.Credentials.Username,
-		Password: e.Credentials.Password,
-		Insecure: true,
+func InClusterConfig() (*rest_client.Config, error) {
+
+	log.Printf("Figuring out connection information...")
+
+	// check if use https
+	if _, err := os.Stat("/var/run/secrets/kubernetes.io/serviceaccount/" + kube_api.ServiceAccountRootCAKey); err == nil {
+		log.Printf(fmt.Sprintf("Cluster connection will be using https"))
+		return rest_client.InClusterConfig()
+	} else {
+		master_url := os.Getenv("API_SERVER_URL")
+		if len(master_url) == 0 {
+			log.Printf("API_SERVER_URL env varialble is not specified, will tru to use http://kubernetes")
+			master_url = "http://kubernetes"
+		}
+
+		config := &rest_client.Config{
+			Host:            master_url,
+		}
+		config.QPS = 20
+		qps_s := os.Getenv("QPS")
+		if qps_s != "" {
+			qps, err := strconv.ParseFloat(qps_s, 32)
+			if err == nil {
+				config.QPS = float32(qps)
+			}
+		}
+
+		config.Burst = 30
+		burst_s := os.Getenv("BURST")
+		if burst_s != "" {
+			burst, err := strconv.ParseInt(burst_s, 10, 32)
+			if err == nil {
+				config.Burst = int(burst)
+			}
+		}
+
+		return config, nil
 	}
 
-	log.Printf(fmt.Sprintf("polling %s", e.Url))
-	client, err := client.New(config)
+}
+
+func (e KubeMetricDetailConfig) Run(metrics chan *Metrics) {
+
+	localConfig, err := InClusterConfig()
+
+
+
+	client, err := client.New(localConfig)
+
 	if err != nil {
-		log.Printf(fmt.Sprintf("failed to connect to %s! trying again in %d seconds...", e.Url, KubeRetrySeconds))
+		log.Printf(fmt.Sprintf("failed to connect to %s! trying again in %d seconds...", localConfig.Host, KubeRetrySeconds))
 		time.Sleep(KubeRetrySeconds * time.Second)
 		return
 	}
+
+
+	metricsGroup := &Metrics{}
+
+	log.Printf(fmt.Sprintf("polling %s", localConfig.Host))
 
 	option_set := make(map[string]string)
 	options := kube_api.ListOptions{LabelSelector: kube_labels.SelectorFromSet(option_set), FieldSelector: kube_fields.SelectorFromSet(option_set)}
 
 	deployments, err := getDeploymentList(client.ExtensionsClient)
 	if err != nil {
-		log.Printf(fmt.Sprintf("failed to list deployments from url %s %s! trying again in %d seconds...", deployments, e.Url, KubeRetrySeconds))
+		log.Printf(fmt.Sprintf("failed to list deployments from url %s %s! trying again in %d seconds...", deployments, localConfig.Host, KubeRetrySeconds))
 		log.Printf(fmt.Sprintf("%s", err))
 		time.Sleep(KubeRetrySeconds * time.Second)
 		return
@@ -206,7 +231,7 @@ func (e KubeMetricDetailConfig) Run(metrics chan *Metrics) {
 					Name:   metric_name,
 					Type:   "g",
 					Value:  float64(1),
-					Tags:   fmt.Sprintf("source_type:kubernetes,pod:%s,container:%s,namespace:%s,ready:%s", containerStatus.Name, pod.Name, pod.Namespace, strconv.FormatBool(containerStatus.Ready)),
+					Tags:   fmt.Sprintf("source_type:kubernetes,pod:%s,container:%s,namespace:%s,ready:%s,%s", containerStatus.Name, pod.Name, pod.Namespace, strconv.FormatBool(containerStatus.Ready), getLabelTags(pod.ObjectMeta)),
 				}
 				metricsGroup.MetricsList = append(metricsGroup.MetricsList, containerStatuses)
 			}
@@ -221,74 +246,94 @@ func (e KubeMetricDetailConfig) Run(metrics chan *Metrics) {
 				failed++
 			}
 		}
+
+		replicaSetTags := fmt.Sprintf("source_type:kubernetes,replica_set:%s,namespace:%s,%s", deployment.Name, deployment.Namespace, getLabelTags(deployment.ObjectMeta))
+		deploymentTags := fmt.Sprintf("source_type:kubernetes,deployment:%s,namespace:%s,%s", deployment.Name, deployment.Namespace, getLabelTags(deployment.ObjectMeta))
+
 		replicaSetPercentRunning := Metric{
 			Prefix: "kubernetes",
 			Name:   "replica_set.percent_running",
 			Type:   "g",
 			Value:  float64(float64(running) / float64(deployment.Status.Replicas) * 100),
-			Tags:   fmt.Sprintf("source_type:kubernetes,replica_set:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags:   replicaSetTags,
 		}
 		replicaSetPercentWaiting := Metric{
 			Prefix: "kubernetes",
 			Name:   "replica_set.percent_waiting",
 			Type:   "g",
 			Value:  float64(float64(waiting) / float64(deployment.Status.Replicas) * 100),
-			Tags:   fmt.Sprintf("source_type:kubernetes,replica_set:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags:   replicaSetTags,
 		}
 		replicaSetPercentSucceeded := Metric{
 			Prefix: "kubernetes",
 			Name:   "replica_set.percent_succeeded",
 			Type:   "g",
 			Value:  float64(float64(succeeded) / float64(deployment.Status.Replicas) * 100),
-			Tags:   fmt.Sprintf("source_type:kubernetes,replica_set:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags:   replicaSetTags,
 		}
 		replicaSetPercentFailed := Metric{
 			Prefix: "kubernetes",
 			Name:   "replica_set.percent_failed",
 			Type:   "g",
 			Value:  float64(float64(failed) / float64(deployment.Status.Replicas) * 100),
-			Tags:   fmt.Sprintf("source_type:kubernetes,replica_set:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags:   replicaSetTags,
 		}
 		deploymentSpecs := Metric{
 			Prefix: "kubernetes",
 			Name:   "deployment.replicas.spec",
 			Type:   "g",
 			Value:  float64(deployment.Spec.Replicas),
-			Tags:   fmt.Sprintf("source_type:kubernetes,deployment:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags: deploymentTags,
 		}
 		deploymentStatuses := Metric{
 			Prefix: "kubernetes",
 			Name:   "deployment.replicas.status",
 			Type:   "g",
 			Value:  float64(deployment.Status.Replicas),
-			Tags:   fmt.Sprintf("source_type:kubernetes,deployment:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags:   deploymentTags,
 		}
 		deploymentUpdatedReplicas := Metric{
 			Prefix: "kubernetes",
 			Name:   "deployment.replicas.updated",
 			Type:   "g",
 			Value:  float64(deployment.Status.UpdatedReplicas),
-			Tags:   fmt.Sprintf("source_type:kubernetes,deployment:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags:   deploymentTags,
 		}
 		deploymentAvailableReplicas := Metric{
 			Prefix: "kubernetes",
 			Name:   "deployment.replicas.available",
 			Type:   "g",
 			Value:  float64(deployment.Status.AvailableReplicas),
-			Tags:   fmt.Sprintf("source_type:kubernetes,deployment:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags:   deploymentTags,
 		}
 		deploymentUnavailableReplicas := Metric{
 			Prefix: "kubernetes",
 			Name:   "deployment.replicas.unavailable",
 			Type:   "g",
 			Value:  float64(deployment.Status.UnavailableReplicas),
-			Tags:   fmt.Sprintf("source_type:kubernetes,deployment:%s,namespace:%s", deployment.Name, deployment.Namespace),
+			Tags:   deploymentTags,
+		}
+		deploymentPercentAvailable := Metric{
+			Prefix: "kubernetes",
+			Name:   "deployment.percent_available",
+			Type:   "g",
+			Value:  float64(float64(deployment.Status.AvailableReplicas) / float64(deployment.Status.Replicas) * 100),
+			Tags:   deploymentTags,
+		}
+		deploymentPercentUnavailable := Metric{
+			Prefix: "kubernetes",
+			Name:   "deployment.percent_unavailable",
+			Type:   "g",
+			Value:  float64(float64(deployment.Status.UnavailableReplicas) / float64(deployment.Status.Replicas) * 100),
+			Tags:   deploymentTags,
 		}
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, deploymentSpecs)
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, deploymentStatuses)
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, deploymentUpdatedReplicas)
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, deploymentAvailableReplicas)
+		metricsGroup.MetricsList = append(metricsGroup.MetricsList, deploymentPercentAvailable)
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, deploymentUnavailableReplicas)
+		metricsGroup.MetricsList = append(metricsGroup.MetricsList, deploymentPercentUnavailable)
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, replicaSetPercentRunning)
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, replicaSetPercentWaiting)
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, replicaSetPercentSucceeded)
@@ -298,7 +343,7 @@ func (e KubeMetricDetailConfig) Run(metrics chan *Metrics) {
 	rc_interface := client.ReplicationControllers(kube_api.NamespaceAll)
 	rcs, err := rc_interface.List(options)
 	if err != nil {
-		log.Printf(fmt.Sprintf("failed to list replication controllers from url %s! trying again in %d seconds...", e.Url, KubeRetrySeconds))
+		log.Printf(fmt.Sprintf("failed to list replication controllers from url %s! trying again in %d seconds...", localConfig.Host, KubeRetrySeconds))
 		log.Printf(fmt.Sprintf("%s", err))
 		time.Sleep(KubeRetrySeconds * time.Second)
 		return
@@ -334,14 +379,14 @@ func (e KubeMetricDetailConfig) Run(metrics chan *Metrics) {
 					Name:   metric_name,
 					Type:   "g",
 					Value:  float64(1),
-					Tags:   fmt.Sprintf("source_type:kubernetes,pod:%s,container:%s,namespace:%s,ready:%s", containerStatus.Name, pod.Name, pod.Namespace, strconv.FormatBool(containerStatus.Ready)),
+					Tags:   fmt.Sprintf("source_type:kubernetes,pod:%s,container:%s,namespace:%s,ready:%s,%s", containerStatus.Name, pod.Name, pod.Namespace, strconv.FormatBool(containerStatus.Ready), getLabelTags(pod.ObjectMeta)),
 				}
 				containerRestarts := Metric{
 					Prefix: "kubernetes",
 					Name:   "container.restarts",
 					Type:   "g",
 					Value:  float64(containerStatus.RestartCount),
-					Tags:   fmt.Sprintf("source_type:kubernetes,pod:%s,container:%s,namespace:%s", containerStatus.Name, pod.Name, pod.Namespace),
+					Tags:   fmt.Sprintf("source_type:kubernetes,pod:%s,container:%s,namespace:%s,%s", containerStatus.Name, pod.Name, pod.Namespace, getLabelTags(pod.ObjectMeta)),
 				}
 				metricsGroup.MetricsList = append(metricsGroup.MetricsList, containerStatuses)
 				metricsGroup.MetricsList = append(metricsGroup.MetricsList, containerRestarts)
@@ -362,28 +407,28 @@ func (e KubeMetricDetailConfig) Run(metrics chan *Metrics) {
 			Name:   "replication_controller.percent_running",
 			Type:   "g",
 			Value:  float64(float64(running) / float64(rc.Status.Replicas) * 100),
-			Tags:   fmt.Sprintf("source_type:kubernetes,replication_controller:%s,namespace:%s", rc.Name, rc.Namespace),
+			Tags:   fmt.Sprintf("source_type:kubernetes,replication_controller:%s,namespace:%s,%s", rc.Name, rc.Namespace, getLabelTags(rc.ObjectMeta)),
 		}
 		replicationControllerPercentWaiting := Metric{
 			Prefix: "kubernetes",
 			Name:   "replication_controller.percent_waiting",
 			Type:   "g",
 			Value:  float64(float64(waiting) / float64(rc.Status.Replicas) * 100),
-			Tags:   fmt.Sprintf("source_type:kubernetes,replication_controller:%s,namespace:%s", rc.Name, rc.Namespace),
+			Tags:   fmt.Sprintf("source_type:kubernetes,replication_controller:%s,namespace:%s,%s", rc.Name, rc.Namespace, getLabelTags(rc.ObjectMeta)),
 		}
 		replicationControllerPercentSucceeded := Metric{
 			Prefix: "kubernetes",
 			Name:   "replication_controller.percent_succeeded",
 			Type:   "g",
 			Value:  float64(float64(succeeded) / float64(rc.Status.Replicas) * 100),
-			Tags:   fmt.Sprintf("source_type:kubernetes,replication_controller:%s,namespace:%s", rc.Name, rc.Namespace),
+			Tags:   fmt.Sprintf("source_type:kubernetes,replication_controller:%s,namespace:%s,%s", rc.Name, rc.Namespace, getLabelTags(rc.ObjectMeta)),
 		}
 		replicationControllerPercentFailed := Metric{
 			Prefix: "kubernetes",
 			Name:   "replication_controller.percent_failed",
 			Type:   "g",
 			Value:  float64(float64(failed) / float64(rc.Status.Replicas) * 100),
-			Tags:   fmt.Sprintf("source_type:kubernetes,replication_controller:%s,namespace:%s", rc.Name, rc.Namespace),
+			Tags:   fmt.Sprintf("source_type:kubernetes,replication_controller:%s,namespace:%s,%s", rc.Name, rc.Namespace, getLabelTags(rc.ObjectMeta)),
 		}
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, replicationControllerPercentRunning)
 		metricsGroup.MetricsList = append(metricsGroup.MetricsList, replicationControllerPercentWaiting)
@@ -393,6 +438,14 @@ func (e KubeMetricDetailConfig) Run(metrics chan *Metrics) {
 	metrics <- metricsGroup
 	metricsGroup.MetricsList = []Metric{}
 	time.Sleep(e.Interval * time.Millisecond)
+}
+
+func getLabelTags(metadata kube_api.ObjectMeta) (string) {
+	tags := ""
+	for label, value := range metadata.Labels {
+		tags = tags + fmt.Sprintf("%s:%s,", label, value)
+	}
+	return tags;
 }
 
 type MetricParser struct {
@@ -418,102 +471,9 @@ func (p MetricParser) Run(line []byte) (tag_map string, metric int, metric_name 
 	return tag_map, metric, metric_name, nil
 }
 
-//func (e KubeMetricConfig) Run(metrics chan *Metrics) {
-//	//re := regexp.MustCompile(`^(.+){(.+)}\s([0-9]+)$`)
-//	//metric_parser := &MetricParser{Regex: re}
-//	//encoder := &kube_runtime.Encoder{}
-//	//decoder := &kube_runtime.Decoder{}
-//	//codec := kube_runtime.NewCodec(encoder, decoder)
-//	codec := kube_runtime.Serializer{}
-//	group_version := &kube_api_unversioned.GroupVersion{
-//		Group:   "api",
-//		Version: "v1",
-//	}
-//	content_config := restclient.ContentConfig{
-//		GroupVersion: group_version,
-//		Codec:        kube_runtime.Codec{},
-//	}
-//	config := &restclient.Config{
-//		Host:          e.Url,
-//		APIPath:       e.Version,
-//		Username:      e.Credentials.Username,
-//		Password:      e.Credentials.Password,
-//		ContentConfig: content_config,
-//		//Codec:           codec,
-//		TLSClientConfig: restclient.TLSClientConfig{},
-//		Insecure:        true,
-//	}
-//	client, err := restclient.RESTClientFor(config)
-//	if err != nil {
-//		log.Printf(fmt.Sprintf("failed to get rest client: %s! trying again in %d seconds...", err, KubeRetrySeconds))
-//		time.Sleep(KubeRetrySeconds * time.Second)
-//		return
-//	}
-//	//request := restclient.NewRequest(client, "GET", fmt.Sprintf("%s%s", e.Url, e.Path), e.Version, restclient.ContentConfig{}, restclient.BackoffManager{}, util.RateLimiter{})
-//	request := client.Get()
-//	response := request.Do()
-//	fmt.Println(response)
-//
-//	//httpReq := &Http{
-//	//	Url:         e.Url,
-//	//	Path:        e.Path,
-//	//	Credentials: e.Credentials,
-//	//}
-//
-//	//response, err := httpReq.Request("GET")
-//	//if err != nil {
-//	//	return
-//	//}
-//	//if err != nil {
-//	//	log.Printf(fmt.Sprintf("failed to connect to %s! trying again in %d seconds...", e.Url, KubeRetrySeconds))
-//	//	time.Sleep(KubeRetrySeconds * time.Second)
-//	//	return
-//	//}
-//	//defer response.Body.Close()
-//	//reader := bufio.NewReader(response.Body)
-//	//for {
-//	//	line, err := reader.ReadBytes('\n')
-//	//	if err != nil {
-//	//		break
-//	//	}
-//	//	tag_map, metric, metric_name, err := metric_parser.Run(line)
-//	//	if err != nil {
-//	//		continue
-//	//	}
-//	//	metrics <- &Metrics{
-//	//		MetricsList: []Metric{
-//	//			Metric{
-//	//				Prefix: "kubernetes",
-//	//				Name:   metric_name,
-//	//				Type:   "c",
-//	//				Value:  float64(metric),
-//	//				Tags:   fmt.Sprintf("source_type:kubernetes,%s", tag_map),
-//	//			},
-//	//		},
-//	//	}
-//	//}
-//	time.Sleep(e.Interval * time.Millisecond)
-//}
 
 func LoadKubeEventsConfig() KubeEvents {
-	url := os.Getenv("API_SERVER_URL")
-	if url == "" {
-		log.Fatal("Please specify an env var API_SERVER_URL that contains the url name of the kubernetes API.")
-	}
-	username := os.Getenv("API_USERNAME")
-	if username == "" {
-		log.Fatal("Please specify an env var API_USERNAME that contains the username of the kubernetes API.")
-	}
-	password := os.Getenv("API_PASSWORD")
-	if password == "" {
-		log.Fatal("Please specify an env var API_PASSWORD that contains the password of the kubernetes API.")
-	}
 	return KubeEvents{
-		Url: url,
-		Credentials: Credentials{
-			Username: username,
-			Password: password,
-		},
 		Version:  "v1",
 		Path:     "/api/v1/events?watch=true",
 		Interval: 5000,
@@ -521,34 +481,9 @@ func LoadKubeEventsConfig() KubeEvents {
 }
 
 func LoadKubeMetricsConfigList() MetricCollectors {
-	url := os.Getenv("API_SERVER_URL")
-	if url == "" {
-		log.Fatal("Please specify an env var API_SERVER_URL that contains the url name of the kubernetes API.")
-	}
-	username := os.Getenv("API_USERNAME")
-	if username == "" {
-		log.Fatal("Please specify an env var API_USERNAME that contains the username of the kubernetes API.")
-	}
-	password := os.Getenv("API_PASSWORD")
-	if password == "" {
-		log.Fatal("Please specify an env var API_PASSWORD that contains the password of the kubernetes API.")
-	}
-	credentials := Credentials{
-		Username: username,
-		Password: password,
-	}
 	return MetricCollectors{
 		Collectors: []MetricCollector{
-			//KubeMetricConfig{
-			//	Url:         url,
-			//	Credentials: credentials,
-			//	Version:     "v1",
-			//	Path:        "/metrics",
-			//	Interval:    10000,
-			//},
 			KubeMetricDetailConfig{
-				Url:         url,
-				Credentials: credentials,
 				Version:     "v1",
 				Path:        "",
 				Interval:    15000,

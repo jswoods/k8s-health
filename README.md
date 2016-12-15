@@ -49,8 +49,6 @@ spec:
             name: k8shealthtcp
             protocol: TCP
         env:
-          - name: API_SERVER_URL
-            value: "https://us-east-1-infra-kubernetes.vevodev.com"
           - name: STATSD_HOST
             value: "dd-agent.kube-system"
           - name: STATSD_PORT

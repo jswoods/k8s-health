@@ -76,6 +76,7 @@ func (e KubeEvents) Run(events chan *Events) {
 		response, err := httpClient.Get(fmt.Sprintf("%s/%s", host, e.Path))
 		log.Printf(fmt.Sprintf("got response from %s", host))
 		if err != nil {
+			log.Printf(fmt.Sprintf("error: bad response from %s, %s", host, err))
 			continue
 		}
 		log.Printf(fmt.Sprintf("now watching endpoint %s", e.Path))
@@ -235,7 +236,15 @@ func (e KubeMetricDetailConfig) Run(metrics chan *Metrics) {
 					Value:  float64(1),
 					Tags:   fmt.Sprintf("source_type:kubernetes,pod:%s,container:%s,namespace:%s,ready:%s,%s", containerStatus.Name, pod.Name, pod.Namespace, strconv.FormatBool(containerStatus.Ready), getLabelTags(pod.ObjectMeta)),
 				}
+				containerRestarts := Metric{
+					Prefix: "kubernetes",
+					Name:   "container.restarts",
+					Type:   "g",
+					Value:  float64(containerStatus.RestartCount),
+					Tags:   fmt.Sprintf("source_type:kubernetes,pod:%s,container:%s,namespace:%s,%s", containerStatus.Name, pod.Name, pod.Namespace, getLabelTags(pod.ObjectMeta)),
+				}
 				metricsGroup.MetricsList = append(metricsGroup.MetricsList, containerStatuses)
+				metricsGroup.MetricsList = append(metricsGroup.MetricsList, containerRestarts)
 			}
 			switch pod.Status.Phase {
 			case kube_api.PodRunning:

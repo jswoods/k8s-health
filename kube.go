@@ -74,7 +74,7 @@ func (e KubeEvents) Run(events chan *Events) {
 
 	for {
 		response, err := httpClient.Get(fmt.Sprintf("%s/%s", host, e.Path))
-		log.Printf(fmt.Sprintf("got response from %s", host))
+		log.Printf(fmt.Sprintf("got %d response from %s/%s", response.StatusCode, host, e.Path))
 		if err != nil {
 			log.Printf(fmt.Sprintf("error: bad response from %s, %s", host, err))
 			continue
@@ -95,7 +95,6 @@ func (e KubeEvents) Run(events chan *Events) {
 			err = json.Unmarshal([]byte(jsonString), &kubeEventParsed)
 			if err != nil {
 				log.Println(fmt.Sprintf("bad event: %s", jsonString))
-				return
 			}
 
 			kubeEvent := kubeEventParsed.Object
@@ -485,7 +484,7 @@ func (p MetricParser) Run(line []byte) (tag_map string, metric int, metric_name 
 func LoadKubeEventsConfig() KubeEvents {
 	return KubeEvents{
 		Version:  "v1",
-		Path:     "/api/v1/events?watch=true",
+		Path:     "api/v1/events?watch=true",
 		Interval: 5000,
 	}
 }

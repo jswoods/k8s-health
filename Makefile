@@ -1,5 +1,5 @@
 IMAGE_NAME=jswoods/k8s-health
-DOCKER_TAG=${IMAGE_NAME}:1.2.5
+DOCKER_TAG=${IMAGE_NAME}:1.2.7
 
 default: build
 
